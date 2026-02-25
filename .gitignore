@@ -12,18 +12,6 @@ __pycache__/
 datasets/
 TrainingRecords/
 
-# 个人隐私文件（仅本地保留）
-毕设提交文件/
-汇报消息/
-FAULTGAT_中文翻译.md
-FaultGAT论文精读笔记.md
-PROGRESS.md
-代码解释和终端命令.md
-代码涉及公式.md
-第三次交流信息存储.md
-各阶段子任务计划表.md
-论文格式要求.md
-
 # 系统文件
 Thumbs.db
 .DS_Store

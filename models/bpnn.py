@@ -87,73 +87,85 @@ class BPNN(BaseModel):
         # 适合多标签分类问题 (每个节点独立判断是否故障)
         self.criterion = nn.BCELoss()
     
-    def train(self, train_data: tuple, val_data: tuple, epochs: int = 100, batch_size: int = 64):
+    def train(self, train_data: tuple, val_data: tuple, epochs: int = 100, batch_size: int = 64) -> list:
         """
         训练模型
-        
+
         训练流程:
         1. 前向传播: 输入 syndrome → 网络 → 预测输出
         2. 计算损失: 比较预测值和真实标签的差距
         3. 反向传播: 计算每个参数对损失的贡献 (梯度)
         4. 更新参数: 按梯度方向调整权重，减小损失
-        
+
         Args:
             train_data: (X_train, Y_train) 训练集
             val_data: (X_val, Y_val) 验证集
             epochs: 训练轮数 (遍历整个训练集的次数)
             batch_size: 批次大小 (每次更新使用的样本数)
+
+        Returns:
+            每 epoch 的损失记录列表，每项为 {"epoch": int, "train_loss": float, "val_loss": float}
         """
         logger = get_logger()
-        
+        loss_history = []
+
         # 转换为 PyTorch 张量
         X_train, Y_train = torch.FloatTensor(train_data[0]), torch.FloatTensor(train_data[1])
         X_val, Y_val = torch.FloatTensor(val_data[0]), torch.FloatTensor(val_data[1])
-        
+
         # 数据加载器: 自动分批、打乱数据
         train_loader = torch.utils.data.DataLoader(
             torch.utils.data.TensorDataset(X_train, Y_train),
             batch_size=batch_size,
             shuffle=True  # 每个 epoch 打乱顺序，防止模型记住顺序
         )
-        
+
         # 训练循环
         for epoch in range(epochs):
             # ========== 训练阶段 ==========
             self.network.train()  # 开启训练模式 (启用 Dropout)
             train_loss = 0
-            
+
             for bx, by in train_loader:
                 # 1. 清除上一次的梯度 (PyTorch 会累积梯度)
                 self.optimizer.zero_grad()
-                
+
                 # 2. 前向传播: 输入 → 预测
                 predictions = self.network(bx)
-                
+
                 # 3. 计算损失
                 loss = self.criterion(predictions, by)
-                
+
                 # 4. 反向传播: 计算梯度
                 loss.backward()
-                
+
                 # 5. 更新参数
                 self.optimizer.step()
-                
+
                 train_loss += loss.item()
-            
+
             # ========== 验证阶段 ==========
             self.network.eval()  # 开启评估模式 (关闭 Dropout)
             with torch.no_grad():  # 不计算梯度，节省内存
                 val_predictions = self.network(X_val)
                 val_loss = self.criterion(val_predictions, Y_val).item()
-            
+
             # 学习率调度：根据验证损失调整学习率
             self.scheduler.step(val_loss)
-            
+
+            avg_train_loss = train_loss / len(train_loader)
+            loss_history.append({
+                "epoch": epoch + 1,
+                "train_loss": round(avg_train_loss, 6),
+                "val_loss": round(val_loss, 6)
+            })
+
             # 每 20 轮打印一次
             if (epoch + 1) % 20 == 0:
-                avg_train_loss = train_loss / len(train_loader)
                 current_lr = self.optimizer.param_groups[0]['lr']
                 logger.info(f"Epoch [{epoch+1}/{epochs}] Train: {avg_train_loss:.4f}, Val: {val_loss:.4f}, LR: {current_lr:.6f}")
+
+        return loss_history
     
     def predict(self, x: np.ndarray) -> np.ndarray:
         """

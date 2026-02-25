@@ -34,10 +34,22 @@
 | --- | --- | --- |
 | Phase 1 | BPNN 基线实现 | ✅ 已完成 |
 | Phase 2 | GAT 模型实现，替换 BPNN | ✅ 基本完成（剩余：requirements.txt、消融实验配置） |
-| Phase 3 | BPNN vs GAT 多维度对比实验与分析 | 🔧 准备中 |
+| Phase 3 | BPNN vs GAT 多维度对比实验与分析 | 🔧 进行中（代码准备已完成，待跑实验） |
 | Phase 4 | 论文撰写 | 🔧 同步进行 |
 
 > **注意**：当前代码库克隆自指导老师提供的 GitHub 项目并做了改进。BPNN 基线诊断准确率已达 99%+，GAT 模型已实现并验证通过（4D 99%+，6D 94% 大幅领先 BPNN 77%）。
+
+## ★★ 隐私文件管理规则
+
+项目中有部分文件仅本地使用，不推送到 GitHub。这些文件通过 `.git/info/exclude` 排除（而非 `.gitignore`，因为 `.gitignore` 会被推送到远程）。
+
+**当前已排除的文件**（见 `.git/info/exclude`）：
+- `毕设提交文件/`、`汇报消息/` — 毕设提交材料和与导师的沟通记录
+- `FAULTGAT_中文翻译.md`、`FaultGAT论文精读笔记.md` — 内部论文参考
+- `PROGRESS.md`、`各阶段子任务计划表.md` — 项目进度跟踪（含隐私）
+- `代码解释和终端命令.md`、`代码涉及公式.md`、`第三次交流信息存储.md`、`论文格式要求.md` — 个人笔记
+
+**规则**：如果之后新增了不应推送到 GitHub 的本地文件（如个人笔记、导师沟通记录等），应将其路径添加到 `.git/info/exclude` 而非 `.gitignore`。
 
 ## ★★ 关键规则：模型与算法验证
 
@@ -65,7 +77,7 @@
 ## 项目结构
 
 ```
-AI4FaultDiagnosis/
+GAT-FaultDiagnosis/
 ├── topologies/          # 网络拓扑 + PMC syndrome 生成
 │   ├── base.py          # 拓扑抽象基类 (BaseTopology)
 │   └── hypercube.py     # N维超立方体拓扑 (Hypercube)
@@ -83,7 +95,8 @@ AI4FaultDiagnosis/
 │   ├── logger.py        # 日志配置
 │   └── visualizer.py    # Syndrome 可视化
 ├── papers/              # 参考论文（PDF + TXT）
-├── datasets/            # 运行时生成的数据集
+├── datasets/            # 运行时生成的数据集（不推送）
+├── TrainingRecords/     # 实验记录 JSON（不推送，按时间戳子文件夹组织）
 └── main.py              # 项目入口（支持 BPNN/GAT/对比模式）
 ```
 
@@ -171,10 +184,10 @@ Softmax → 节点分类
 | Dropout | 0.3 | FaultGAT |
 | 优化器 | Adam (weight_decay=5e-4) | FaultGAT |
 | 初始学习率 | 0.002 | FaultGAT |
-| 损失函数 | Focal Loss ($\alpha=0.25, \gamma=2.0$) | FaultGAT |
+| 损失函数 | CrossEntropyLoss（Focal Loss 在永久性故障场景下效果不佳，已弃用） | 自定义 |
 | 特征变换 | LayerNorm + LeakyReLU | FaultGAT |
 | 中间层归一化 | BatchNorm | FaultGAT |
-| Early Stopping | 基于 val F1，patience=30 | FaultGAT |
+| Early Stopping | 基于 val F1，patience=50 | FaultGAT（patience 调大） |
 | 梯度裁剪 | max_norm=1.0 | FaultGAT |
 | LR 调度 | ReduceLROnPlateau (factor=0.5, patience=15) | 自定义 |
 

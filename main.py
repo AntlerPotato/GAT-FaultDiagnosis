@@ -1,6 +1,6 @@
 """
 Input:
-  - 标准库: argparse, random
+  - 标准库: argparse, random, time, json, os
   - 第三方: numpy, torch
   - 本地: topologies.Hypercube, models (BPNN, GAT), data (generate_data, save_dataset, load_dataset), evaluation.evaluate, utils (setup_logger, visualize_syndrome)
 Output:
@@ -16,7 +16,10 @@ Position: 项目的入口文件，协调整个故障诊断流程，支持 BPNN/G
 """
 
 import argparse
+import json
+import os
 import random
+import time
 import numpy as np
 import torch
 from topologies import Hypercube
@@ -58,7 +61,7 @@ def train_and_evaluate(model_name: str, model, train_data: tuple,
                        val_data: tuple, test_data: tuple,
                        epochs: int, logger) -> dict:
     """
-    训练并评估单个模型
+    训练并评估单个模型，记录训练耗时、推理时延、参数量和 loss 曲线
 
     Args:
         model_name: 模型名称（用于日志输出）
@@ -70,21 +73,76 @@ def train_and_evaluate(model_name: str, model, train_data: tuple,
         logger: 日志对象
 
     Returns:
-        评估结果字典
+        包含评估指标、训练耗时、推理时延、参数量、loss 曲线的结果字典
     """
-    logger.info(f"--- Training {model_name} ---")
-    model.train(train_data, val_data, epochs)
+    # 模型参数量
+    n_params = sum(p.numel() for p in model.network.parameters())
+    logger.info(f"--- Training {model_name} (params: {n_params:,}) ---")
 
+    # 训练计时
+    start_time = time.time()
+    loss_history = model.train(train_data, val_data, epochs)
+    train_time = time.time() - start_time
+    logger.info(f"{model_name} training time: {train_time:.2f}s")
+
+    # 测试集评估
     logger.info(f"Evaluating {model_name} on test set...")
     results = evaluate(model, test_data)
+
+    # 推理时延：对测试集前 100 个样本逐个推理，取平均
+    n_latency_samples = min(100, len(test_data[0]))
+    latency_times = []
+    for i in range(n_latency_samples):
+        t0 = time.perf_counter()
+        model.predict(test_data[0][i])
+        t1 = time.perf_counter()
+        latency_times.append(t1 - t0)
+    avg_latency_ms = (sum(latency_times) / len(latency_times)) * 1000
 
     logger.info(f"=== {model_name} Results ===")
     logger.info(f"Accuracy:  {results['accuracy']*100:.2f}%")
     logger.info(f"Precision: {results['precision']*100:.2f}%")
     logger.info(f"Recall:    {results['recall']*100:.2f}%")
     logger.info(f"F1-Score:  {results['f1']*100:.2f}%")
+    logger.info(f"Inference latency: {avg_latency_ms:.3f} ms/sample (avg of {n_latency_samples})")
+
+    # 将额外信息附加到结果字典
+    results["n_params"] = n_params
+    results["train_time_s"] = round(train_time, 2)
+    results["avg_latency_ms"] = round(avg_latency_ms, 3)
+    results["loss_history"] = loss_history
 
     return results
+
+
+def save_experiment_record(record: dict, batch_id: str, logger) -> str:
+    """
+    将实验记录保存为 JSON 文件到 TrainingRecords/{batch_id}/ 子目录
+
+    同一次运行的所有模型记录共享同一个 batch_id 子文件夹。
+    文件名格式：{model}_{dimension}d_f{faults}.json
+
+    Args:
+        record: 实验记录字典
+        batch_id: 批次标识（时间戳），作为子文件夹名
+        logger: 日志对象
+
+    Returns:
+        保存的文件路径
+    """
+    batch_dir = os.path.join("TrainingRecords", batch_id)
+    os.makedirs(batch_dir, exist_ok=True)
+    model_name = record.get("model", "unknown")
+    dimension = record.get("dimension", 0)
+    faults = record.get("faults", "")
+    filename = f"{model_name}_{dimension}d_f{faults}.json"
+    filepath = os.path.join(batch_dir, filename)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+
+    logger.info(f"Experiment record saved: {filepath}")
+    return filepath
 
 
 def main() -> None:
@@ -164,13 +222,33 @@ def main() -> None:
     logger.info(f"Nodes: {n_nodes}, Max faults: {max_faults}")
 
     # ==================== 模型训练与评估 ====================
+    # 实验配置（用于 JSON 记录）
+    batch_id = time.strftime("%Y%m%d_%H%M%S")
+    experiment_config = {
+        "dimension": dimension,
+        "n_nodes": n_nodes,
+        "max_faults": max_faults,
+        "faults": args.faults,
+        "n_samples": args.n_samples,
+        "epochs": args.epochs,
+        "seed": seed,
+    }
+
     if args.model == "bpnn":
         model = BPNN(input_size=topo.syndrome_size, output_size=n_nodes)
-        train_and_evaluate("BPNN", model, train_data, val_data, test_data, args.epochs, logger)
+        results = train_and_evaluate("BPNN", model, train_data, val_data, test_data, args.epochs, logger)
+        record = {**experiment_config, "model": "BPNN", "results": {
+            k: v for k, v in results.items() if k != "loss_history"
+        }, "loss_history": results["loss_history"]}
+        save_experiment_record(record, batch_id, logger)
 
     elif args.model == "gat":
         model = GAT(topo=topo)
-        train_and_evaluate("GAT", model, train_data, val_data, test_data, args.epochs, logger)
+        results = train_and_evaluate("GAT", model, train_data, val_data, test_data, args.epochs, logger)
+        record = {**experiment_config, "model": "GAT", "results": {
+            k: v for k, v in results.items() if k != "loss_history"
+        }, "loss_history": results["loss_history"]}
+        save_experiment_record(record, batch_id, logger)
 
     elif args.model == "both":
         # 依次训练 BPNN 和 GAT，输出对比结果
@@ -189,32 +267,12 @@ def main() -> None:
             sign = "+" if diff >= 0 else ""
             logger.info(f"{metric.capitalize():>10}: BPNN={b:.2f}%  GAT={g:.2f}%  ({sign}{diff:.2f}%)")
 
-        # === Phase 3 对比可视化（暂时注释）===
-        # 以下代码用于生成 BPNN vs GAT 的对比图表。
-        # 当 Phase 3 正式开始时，取消注释即可使用。
-        # 位置标记：main.py → main() → both 分支末尾
-        #
-        # import matplotlib.pyplot as plt
-        #
-        # # 1. 指标柱状图对比
-        # metrics_names = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
-        # bpnn_vals = [bpnn_results[k]*100 for k in ['accuracy','precision','recall','f1']]
-        # gat_vals = [gat_results[k]*100 for k in ['accuracy','precision','recall','f1']]
-        # x = np.arange(len(metrics_names))
-        # width = 0.35
-        # fig, ax = plt.subplots(figsize=(10, 6))
-        # ax.bar(x - width/2, bpnn_vals, width, label='BPNN')
-        # ax.bar(x + width/2, gat_vals, width, label='GAT')
-        # ax.set_ylabel('Score (%)')
-        # ax.set_title(f'BPNN vs GAT - {dimension}D Hypercube')
-        # ax.set_xticks(x)
-        # ax.set_xticklabels(metrics_names)
-        # ax.legend()
-        # ax.set_ylim(0, 105)
-        # plt.tight_layout()
-        # plt.savefig(f'comparison_{dimension}d.png', dpi=150)
-        # logger.info(f"Comparison chart saved: comparison_{dimension}d.png")
-        # plt.close()
+        # 保存两个模型的实验记录
+        for name, results in [("BPNN", bpnn_results), ("GAT", gat_results)]:
+            record = {**experiment_config, "model": name, "results": {
+                k: v for k, v in results.items() if k != "loss_history"
+            }, "loss_history": results["loss_history"]}
+            save_experiment_record(record, batch_id, logger)
 
 
 if __name__ == "__main__":

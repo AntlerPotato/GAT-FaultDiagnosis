@@ -214,7 +214,7 @@ class GAT(BaseModel):
         return self._edge_cache[bs]
 
     def train(self, train_data: tuple, val_data: tuple, epochs: int = 200,
-              batch_size: int = 64, patience: int = 50):
+              batch_size: int = 64, patience: int = 50) -> list:
         """
         训练 GAT 模型（使用手动批处理，避免 PyG DataLoader 开销）
 
@@ -224,8 +224,12 @@ class GAT(BaseModel):
             epochs: 训练轮数
             batch_size: 批次大小
             patience: Early Stopping 耐心值
+
+        Returns:
+            每 epoch 的损失记录列表，每项为 {"epoch": int, "train_loss": float, "val_f1": float}
         """
         logger = get_logger()
+        loss_history = []
         n_nodes = self.topo.n_nodes
         device = self.device
 
@@ -285,6 +289,12 @@ class GAT(BaseModel):
 
             self.scheduler.step(val_f1)
 
+            loss_history.append({
+                "epoch": epoch + 1,
+                "train_loss": round(avg_train_loss, 6),
+                "val_f1": round(val_f1, 6)
+            })
+
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
                 best_state = {k: v.clone() for k, v in self.network.state_dict().items()}
@@ -314,6 +324,8 @@ class GAT(BaseModel):
         if best_state is not None:
             self.network.load_state_dict(best_state)
             logger.info(f"Restored best model with Val F1: {best_val_f1*100:.2f}%")
+
+        return loss_history
 
     def predict(self, x: np.ndarray) -> np.ndarray:
         """
