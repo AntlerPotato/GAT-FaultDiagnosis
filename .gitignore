@@ -8,10 +8,6 @@ __pycache__/
 .trae/
 .vscode/
 
-# 运行时生成的数据
-datasets/
-TrainingRecords/
-
 # 系统文件
 Thumbs.db
 .DS_Store

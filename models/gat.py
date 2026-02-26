@@ -64,21 +64,30 @@ class GATDiagnosis(nn.Module):
             ↓
         特征变换层: Linear → LayerNorm → LeakyReLU
             ↓
-        GAT Layer 1（中间层）: 多头注意力 (K=8, hidden=64, concat=True) → BatchNorm → ReLU → Dropout
+        [n_layers=2] GAT Layer 1（中间层）: 多头注意力 → BatchNorm → ReLU → Dropout
             ↓
-        GAT Layer 2（最终层）: 多头注意力 (K=8, out=2, concat=False) → 直接输出 2 分类 logits
+        GAT 最终层: 多头注意力 (concat=False) → 直接输出 2 分类 logits
+
+    支持消融配置：
+        - n_layers=1 时跳过中间 GAT 层
+        - no_regularization=True 时跳过 BatchNorm 和 Dropout
     """
 
     def __init__(self, in_features: int, n_heads: int = 8,
-                 hidden_dim: int = 64, dropout: float = 0.3):
+                 hidden_dim: int = 64, dropout: float = 0.3,
+                 n_layers: int = 2, no_regularization: bool = False):
         """
         Args:
-            in_features: 输入节点特征维度（2 * dimension）
+            in_features: 输入节点特征维度
             n_heads: 注意力头数
             hidden_dim: 每个头的隐藏维度
             dropout: Dropout 率
+            n_layers: GAT 层数（1 或 2）
+            no_regularization: 是否关闭 BatchNorm 和 Dropout
         """
         super().__init__()
+        self.n_layers = n_layers
+        self.no_regularization = no_regularization
 
         # 特征变换层：将原始特征映射到更高维空间
         self.feature_transform = nn.Sequential(
@@ -87,29 +96,30 @@ class GATDiagnosis(nn.Module):
             nn.LeakyReLU(0.2)
         )
 
-        # GAT Layer 1：多头注意力
-        # 输入维度 = hidden_dim * n_heads，输出每个头 hidden_dim
-        # add_self_loops=False：自环在外部预添加到 edge_index 中，
-        # 避免 GATConv 每次 forward 都调用 remove/add_self_loops 创建新张量
-        self.gat1 = GATConv(
-            in_channels=hidden_dim * n_heads,
-            out_channels=hidden_dim,
-            heads=n_heads,
-            dropout=dropout,
-            concat=True,  # 拼接多头输出，输出维度 = hidden_dim * n_heads
-            add_self_loops=False
-        )
-        self.bn1 = nn.BatchNorm1d(hidden_dim * n_heads)
-        self.dropout1 = nn.Dropout(dropout)
+        if n_layers == 2:
+            # GAT Layer 1：多头注意力（中间层）
+            # add_self_loops=False：自环在外部预添加到 edge_index 中，
+            # 避免 GATConv 每次 forward 都调用 remove/add_self_loops 创建新张量
+            self.gat1 = GATConv(
+                in_channels=hidden_dim * n_heads,
+                out_channels=hidden_dim,
+                heads=n_heads,
+                dropout=dropout,
+                concat=True,
+                add_self_loops=False
+            )
+            if not no_regularization:
+                self.bn1 = nn.BatchNorm1d(hidden_dim * n_heads)
+                self.dropout1 = nn.Dropout(dropout)
 
-        # GAT Layer 2（最终层）：多头注意力，直接输出 2 分类 logits
+        # GAT 最终层：多头注意力，直接输出 2 分类 logits
         # concat=False 对多头结果取平均，输出维度 = out_channels = 2
-        self.gat2 = GATConv(
+        self.gat_final = GATConv(
             in_channels=hidden_dim * n_heads,
             out_channels=2,
             heads=n_heads,
             dropout=dropout,
-            concat=False,  # 最终层对多头取平均（论文做法）
+            concat=False,
             add_self_loops=False
         )
 
@@ -127,14 +137,17 @@ class GATDiagnosis(nn.Module):
         # 特征变换
         x = self.feature_transform(x)
 
-        # GAT Layer 1（中间层）
-        x = self.gat1(x, edge_index)
-        x = self.bn1(x)
-        x = nn.functional.relu(x)
-        x = self.dropout1(x)
+        # GAT 中间层（仅 n_layers=2 时存在）
+        if self.n_layers == 2:
+            x = self.gat1(x, edge_index)
+            if not self.no_regularization:
+                x = self.bn1(x)
+            x = nn.functional.relu(x)
+            if not self.no_regularization:
+                x = self.dropout1(x)
 
-        # GAT Layer 2（最终层，直接输出 logits）
-        logits = self.gat2(x, edge_index)
+        # GAT 最终层（直接输出 logits）
+        logits = self.gat_final(x, edge_index)
         return logits
 
 
@@ -147,7 +160,9 @@ class GAT(BaseModel):
     """
 
     def __init__(self, topo, n_heads: int = 8, hidden_dim: int = 64,
-                 dropout: float = 0.3, lr: float = 0.002):
+                 dropout: float = 0.3, lr: float = 0.002,
+                 n_layers: int = 2, no_regularization: bool = False,
+                 feature_mode: str = "bidirectional"):
         """
         Args:
             topo: 超立方体拓扑对象（需要用于构建图结构）
@@ -155,15 +170,19 @@ class GAT(BaseModel):
             hidden_dim: 隐藏维度
             dropout: Dropout 率
             lr: 学习率
+            n_layers: GAT 层数（1 或 2）
+            no_regularization: 是否关闭 BatchNorm 和 Dropout
+            feature_mode: 特征模式，"bidirectional" 或 "unidirectional"
         """
         self.topo = topo
+        self.feature_mode = feature_mode
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # 预添加自环，避免 GATConv 每次 forward 都 remove/add_self_loops
         edge_index_raw = build_edge_index(topo)
         edge_index_with_loops, _ = pyg_add_self_loops(edge_index_raw, num_nodes=topo.n_nodes)
         self.edge_index = edge_index_with_loops.to(self.device)
         self.reverse_map = build_reverse_index_map(topo)
-        in_features = 2 * topo.dim  # 节点特征维度
+        in_features = topo.dim if feature_mode == "unidirectional" else 2 * topo.dim
 
         # 预缓存批次 edge_index，避免训练中反复创建张量
         # key = batch_size，value = 拼接后的 edge_index
@@ -173,7 +192,9 @@ class GAT(BaseModel):
             in_features=in_features,
             n_heads=n_heads,
             hidden_dim=hidden_dim,
-            dropout=dropout
+            dropout=dropout,
+            n_layers=n_layers,
+            no_regularization=no_regularization
         ).to(self.device)
 
         self.optimizer = optim.Adam(
@@ -236,12 +257,14 @@ class GAT(BaseModel):
         # 预计算所有特征（向量化，一次性完成），并移至 device
         from data.converter import batch_syndrome_to_features
         train_X = torch.tensor(
-            batch_syndrome_to_features(train_data[0], self.topo, self.reverse_map),
+            batch_syndrome_to_features(train_data[0], self.topo, self.reverse_map,
+                                       feature_mode=self.feature_mode),
             dtype=torch.float, device=device
         )
         train_Y = torch.tensor(train_data[1], dtype=torch.long, device=device)
         val_X = torch.tensor(
-            batch_syndrome_to_features(val_data[0], self.topo, self.reverse_map),
+            batch_syndrome_to_features(val_data[0], self.topo, self.reverse_map,
+                                       feature_mode=self.feature_mode),
             dtype=torch.float, device=device
         )
         val_Y = torch.tensor(val_data[1], dtype=torch.long, device=device)
@@ -341,7 +364,8 @@ class GAT(BaseModel):
         """
         self.network.eval()
         with torch.no_grad():
-            node_features = syndrome_to_node_features(x, self.topo, self.reverse_map)
+            node_features = syndrome_to_node_features(x, self.topo, self.reverse_map,
+                                                      feature_mode=self.feature_mode)
             node_features = node_features.to(self.device)
             logits = self.network(node_features, self.edge_index)
             # softmax 取故障类（index=1）的概率

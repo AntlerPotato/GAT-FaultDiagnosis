@@ -54,6 +54,16 @@ def parse_args() -> argparse.Namespace:
                         help="保存数据集（数据集名称）")
     parser.add_argument("--visualize", type=str, default=None,
                         help="可视化单个 syndrome 文件路径")
+    # 消融实验参数（仅影响 GAT 模型）
+    parser.add_argument("--n_heads", type=int, default=8,
+                        help="GAT 注意力头数 (default: 8)")
+    parser.add_argument("--n_layers", type=int, default=2,
+                        help="GAT 层数 (default: 2)")
+    parser.add_argument("--feature_mode", type=str, default="bidirectional",
+                        choices=["bidirectional", "unidirectional"],
+                        help="特征模式：bidirectional / unidirectional (default: bidirectional)")
+    parser.add_argument("--no_regularization", action="store_true",
+                        help="关闭 GAT 的 BatchNorm + Dropout")
     return parser.parse_args()
 
 
@@ -120,7 +130,7 @@ def save_experiment_record(record: dict, batch_id: str, logger) -> str:
     将实验记录保存为 JSON 文件到 TrainingRecords/{batch_id}/ 子目录
 
     同一次运行的所有模型记录共享同一个 batch_id 子文件夹。
-    文件名格式：{model}_{dimension}d_f{faults}.json
+    文件名格式：{model}_{dimension}d_f{faults}_n{n_samples}.json
 
     Args:
         record: 实验记录字典
@@ -130,12 +140,13 @@ def save_experiment_record(record: dict, batch_id: str, logger) -> str:
     Returns:
         保存的文件路径
     """
-    batch_dir = os.path.join("TrainingRecords", batch_id)
+    batch_dir = os.path.join("TrainingRecords", "raw_data", batch_id)
     os.makedirs(batch_dir, exist_ok=True)
     model_name = record.get("model", "unknown")
     dimension = record.get("dimension", 0)
     faults = record.get("faults", "")
-    filename = f"{model_name}_{dimension}d_f{faults}.json"
+    n_samples = record.get("n_samples", 0)
+    filename = f"{model_name}_{dimension}d_f{faults}_n{n_samples}.json"
     filepath = os.path.join(batch_dir, filename)
 
     with open(filepath, "w", encoding="utf-8") as f:
@@ -222,6 +233,25 @@ def main() -> None:
     logger.info(f"Nodes: {n_nodes}, Max faults: {max_faults}")
 
     # ==================== 模型训练与评估 ====================
+    # 构建 GAT 变体名称（用于文件命名和 JSON 记录）
+    gat_variant = "GAT"
+    if args.n_heads != 8:
+        gat_variant += f"-{args.n_heads}head"
+    if args.n_layers != 2:
+        gat_variant += f"-{args.n_layers}layer"
+    if args.feature_mode == "unidirectional":
+        gat_variant += "-unidir"
+    if args.no_regularization:
+        gat_variant += "-noreg"
+
+    # GAT 消融配置（记录到 JSON 中，方便后续分析）
+    gat_config = {
+        "n_heads": args.n_heads,
+        "n_layers": args.n_layers,
+        "feature_mode": args.feature_mode,
+        "no_regularization": args.no_regularization,
+    }
+
     # 实验配置（用于 JSON 记录）
     batch_id = time.strftime("%Y%m%d_%H%M%S")
     experiment_config = {
@@ -234,6 +264,16 @@ def main() -> None:
         "seed": seed,
     }
 
+    def _create_gat_model() -> GAT:
+        """根据命令行参数创建 GAT 模型实例"""
+        return GAT(
+            topo=topo,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            no_regularization=args.no_regularization,
+            feature_mode=args.feature_mode,
+        )
+
     if args.model == "bpnn":
         model = BPNN(input_size=topo.syndrome_size, output_size=n_nodes)
         results = train_and_evaluate("BPNN", model, train_data, val_data, test_data, args.epochs, logger)
@@ -243,9 +283,10 @@ def main() -> None:
         save_experiment_record(record, batch_id, logger)
 
     elif args.model == "gat":
-        model = GAT(topo=topo)
-        results = train_and_evaluate("GAT", model, train_data, val_data, test_data, args.epochs, logger)
-        record = {**experiment_config, "model": "GAT", "results": {
+        model = _create_gat_model()
+        results = train_and_evaluate(gat_variant, model, train_data, val_data, test_data, args.epochs, logger)
+        record = {**experiment_config, "model": gat_variant, "gat_config": gat_config,
+                  "results": {
             k: v for k, v in results.items() if k != "loss_history"
         }, "loss_history": results["loss_history"]}
         save_experiment_record(record, batch_id, logger)
@@ -255,24 +296,29 @@ def main() -> None:
         bpnn_model = BPNN(input_size=topo.syndrome_size, output_size=n_nodes)
         bpnn_results = train_and_evaluate("BPNN", bpnn_model, train_data, val_data, test_data, args.epochs, logger)
 
-        gat_model = GAT(topo=topo)
-        gat_results = train_and_evaluate("GAT", gat_model, train_data, val_data, test_data, args.epochs, logger)
+        gat_model = _create_gat_model()
+        gat_results = train_and_evaluate(gat_variant, gat_model, train_data, val_data, test_data, args.epochs, logger)
 
         # 对比输出
-        logger.info("=== BPNN vs GAT Comparison ===")
+        logger.info(f"=== BPNN vs {gat_variant} Comparison ===")
         for metric in ['accuracy', 'precision', 'recall', 'f1']:
             b = bpnn_results[metric] * 100
             g = gat_results[metric] * 100
             diff = g - b
             sign = "+" if diff >= 0 else ""
-            logger.info(f"{metric.capitalize():>10}: BPNN={b:.2f}%  GAT={g:.2f}%  ({sign}{diff:.2f}%)")
+            logger.info(f"{metric.capitalize():>10}: BPNN={b:.2f}%  {gat_variant}={g:.2f}%  ({sign}{diff:.2f}%)")
 
         # 保存两个模型的实验记录
-        for name, results in [("BPNN", bpnn_results), ("GAT", gat_results)]:
-            record = {**experiment_config, "model": name, "results": {
-                k: v for k, v in results.items() if k != "loss_history"
-            }, "loss_history": results["loss_history"]}
-            save_experiment_record(record, batch_id, logger)
+        bpnn_record = {**experiment_config, "model": "BPNN", "results": {
+            k: v for k, v in bpnn_results.items() if k != "loss_history"
+        }, "loss_history": bpnn_results["loss_history"]}
+        save_experiment_record(bpnn_record, batch_id, logger)
+
+        gat_record = {**experiment_config, "model": gat_variant, "gat_config": gat_config,
+                      "results": {
+            k: v for k, v in gat_results.items() if k != "loss_history"
+        }, "loss_history": gat_results["loss_history"]}
+        save_experiment_record(gat_record, batch_id, logger)
 
 
 if __name__ == "__main__":

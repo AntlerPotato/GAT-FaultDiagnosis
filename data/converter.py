@@ -71,7 +71,8 @@ def build_reverse_index_map(topo: Hypercube) -> np.ndarray:
 
 
 def batch_syndrome_to_features(X: np.ndarray, topo: Hypercube,
-                               reverse_map: np.ndarray) -> np.ndarray:
+                               reverse_map: np.ndarray,
+                               feature_mode: str = "bidirectional") -> np.ndarray:
     """
     批量将 syndrome 数组转换为节点特征矩阵（向量化，高性能）
 
@@ -79,9 +80,10 @@ def batch_syndrome_to_features(X: np.ndarray, topo: Hypercube,
         X: syndrome 数组，shape = (n_samples, syndrome_size)
         topo: 超立方体拓扑
         reverse_map: 预计算的反向索引映射
+        feature_mode: 特征模式，"bidirectional"（双向，2d 维）或 "unidirectional"（单向，d 维）
 
     Returns:
-        特征数组，shape = (n_samples, n_nodes, 2 * dim)
+        特征数组，shape = (n_samples, n_nodes, 2*dim) 或 (n_samples, n_nodes, dim)
     """
     n_samples = X.shape[0]
     n_nodes = topo.n_nodes
@@ -89,6 +91,9 @@ def batch_syndrome_to_features(X: np.ndarray, topo: Hypercube,
 
     # 每个节点测试邻居的结果：直接 reshape
     test_others = X.reshape(n_samples, n_nodes, dim)
+
+    if feature_mode == "unidirectional":
+        return test_others.astype(np.float32)
 
     # 被邻居测试的结果：用预计算的索引向量化提取
     flat_indices = reverse_map.flatten()  # (n_nodes * dim,)
@@ -100,7 +105,8 @@ def batch_syndrome_to_features(X: np.ndarray, topo: Hypercube,
 
 
 def syndrome_to_node_features(syndrome: np.ndarray, topo: Hypercube,
-                              reverse_map: np.ndarray = None) -> torch.Tensor:
+                              reverse_map: np.ndarray = None,
+                              feature_mode: str = "bidirectional") -> torch.Tensor:
     """
     从单个 syndrome 提取节点特征矩阵
 
@@ -108,14 +114,15 @@ def syndrome_to_node_features(syndrome: np.ndarray, topo: Hypercube,
         syndrome: 一维 syndrome 数组，shape = (n_nodes * dim,)
         topo: 超立方体拓扑
         reverse_map: 预计算的反向索引映射（可选，不传则现场计算）
+        feature_mode: 特征模式，"bidirectional" 或 "unidirectional"
 
     Returns:
-        节点特征矩阵，shape = (n_nodes, 2 * dim)
+        节点特征矩阵，shape = (n_nodes, 2*dim) 或 (n_nodes, dim)
     """
     if reverse_map is None:
         reverse_map = build_reverse_index_map(topo)
     features = batch_syndrome_to_features(
-        syndrome.reshape(1, -1), topo, reverse_map
+        syndrome.reshape(1, -1), topo, reverse_map, feature_mode=feature_mode
     )[0]
     return torch.tensor(features, dtype=torch.float)
 

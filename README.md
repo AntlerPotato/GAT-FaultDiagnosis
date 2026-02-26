@@ -36,9 +36,9 @@
 
 ## 环境要求
 
-- Python >= 3.10
-- PyTorch
-- PyTorch Geometric
+- Python >= 3.10（推荐 3.12，3.13 的 CUDA 支持尚不完善）
+- PyTorch >= 2.1（推荐安装 CUDA 版本以利用 GPU 加速）
+- PyTorch Geometric >= 2.4
 - NumPy, Matplotlib, NetworkX
 
 ## 快速开始
@@ -48,15 +48,20 @@
 git clone https://github.com/AntlerPotato/GAT-FaultDiagnosis.git
 cd GAT-FaultDiagnosis
 
-# 2. 创建虚拟环境
+# 2. 创建虚拟环境（推荐 Python 3.12）
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # macOS/Linux
 
-# 3. 安装依赖
+# 3. 安装 PyTorch（CUDA 版，根据 CUDA 版本选择 index-url）
+pip install torch --index-url https://download.pytorch.org/whl/cu121    # CUDA 12.1
+# pip install torch --index-url https://download.pytorch.org/whl/cu126  # CUDA 12.6
+# pip install torch                                                     # 仅 CPU
+
+# 4. 安装其余依赖
 pip install -r requirements.txt
 
-# 4. 运行
+# 5. 运行
 python main.py -d 4 -f 0.25 -n 5000 -e 200 -m both
 ```
 
@@ -72,6 +77,10 @@ python main.py -d 4 -f 0.25 -n 5000 -e 200 -m both
 | `--save NAME` | 保存数据集 | - |
 | `--load NAME` | 加载数据集 | - |
 | `--visualize PATH` | 可视化单个 syndrome | - |
+| `--n_heads` | GAT 注意力头数（消融实验用） | 8 |
+| `--n_layers` | GAT 层数（消融实验用） | 2 |
+| `--feature_mode` | 特征模式：bidirectional / unidirectional | bidirectional |
+| `--no_regularization` | 关闭 GAT 的 BatchNorm + Dropout | false |
 
 **示例**:
 
@@ -82,8 +91,13 @@ python main.py -d 4 -f 0.25 -n 5000 -e 200
 # GAT 训练
 python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat
 
-# BPNN vs GAT 对比（结果自动保存到 TrainingRecords/）
+# BPNN vs GAT 对比（结果自动保存到 TrainingRecords/raw_data/）
 python main.py -d 6 -f 0.25 -n 5000 -e 200 -m both
+
+# 消融实验示例
+python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat --n_heads 1          # 单头注意力
+python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat --feature_mode unidirectional  # 单向特征
+python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat --n_layers 1         # 单层 GAT
 
 # 保存/加载数据集
 python main.py -n 5000 --save my_data
@@ -119,8 +133,8 @@ GAT-FaultDiagnosis/
 │   ├── logger.py        # 日志配置
 │   └── visualizer.py    # Syndrome 可视化
 ├── papers/              # 参考论文
-├── datasets/            # 保存的数据集（运行时生成，不入库）
-├── TrainingRecords/     # 实验记录 JSON（按时间戳子文件夹组织，不入库）
+├── datasets/            # 保存的数据集（运行时生成）
+├── TrainingRecords/     # 实验记录 JSON（raw_data/{时间戳}/ 子目录组织）
 ├── main.py              # 项目入口
 ├── requirements.txt     # 项目依赖
 ├── CLAUDE.md            # Claude Code 项目规范
@@ -152,7 +166,7 @@ GAT-FaultDiagnosis/
 
 ## 实验记录
 
-每次训练自动保存 JSON 到 `TrainingRecords/{时间戳}/`，包含：
+每次训练自动保存 JSON 到 `TrainingRecords/raw_data/{时间戳}/`，包含：
 - 实验配置（维度、故障率、样本数、epoch、随机种子）
 - 评估指标（Accuracy、Precision、Recall、F1）
 - 效率指标（模型参数量、训练耗时、推理时延）
