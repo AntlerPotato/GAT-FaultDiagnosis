@@ -123,23 +123,34 @@ class GATDiagnosis(nn.Module):
             add_self_loops=False
         )
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor,
+                return_attn: bool = False) -> torch.Tensor | tuple:
         """
         前向传播
 
         Args:
             x: 节点特征，shape = (n_nodes, in_features)
             edge_index: 边索引，shape = (2, n_edges)
+            return_attn: 是否返回各层注意力权重
 
         Returns:
-            logits: shape = (n_nodes, 2)
+            return_attn=False 时：logits, shape = (n_nodes, 2)
+            return_attn=True 时：(logits, attn_dict)，attn_dict 包含：
+                - "final": (edge_index, alpha)，alpha shape = (n_edges, n_heads)
+                - "layer1": (edge_index, alpha)（仅 n_layers=2 时存在）
         """
         # 特征变换
         x = self.feature_transform(x)
 
+        attn_dict = {}
+
         # GAT 中间层（仅 n_layers=2 时存在）
         if self.n_layers == 2:
-            x = self.gat1(x, edge_index)
+            if return_attn:
+                x, attn1 = self.gat1(x, edge_index, return_attention_weights=True)
+                attn_dict["layer1"] = attn1
+            else:
+                x = self.gat1(x, edge_index)
             if not self.no_regularization:
                 x = self.bn1(x)
             x = nn.functional.relu(x)
@@ -147,7 +158,14 @@ class GATDiagnosis(nn.Module):
                 x = self.dropout1(x)
 
         # GAT 最终层（直接输出 logits）
-        logits = self.gat_final(x, edge_index)
+        if return_attn:
+            logits, attn_final = self.gat_final(x, edge_index, return_attention_weights=True)
+            attn_dict["final"] = attn_final
+        else:
+            logits = self.gat_final(x, edge_index)
+
+        if return_attn:
+            return logits, attn_dict
         return logits
 
 
@@ -371,6 +389,85 @@ class GAT(BaseModel):
             # softmax 取故障类（index=1）的概率
             probs = torch.softmax(logits, dim=1)[:, 1]
             return probs.cpu().numpy()
+
+    def get_attention_weights(self, test_data: tuple,
+                              n_samples: int = 200) -> dict:
+        """
+        从测试集提取注意力权重，按边类型分类
+
+        对每个测试样本做单图前向传播，收集最终层的注意力权重，
+        并根据边两端节点的故障标签分为 4 类（N→N, N→F, F→N, F→F）。
+
+        Args:
+            test_data: (X_test, Y_test)，syndrome 数组和标签数组
+            n_samples: 使用的测试样本数（默认 200）
+
+        Returns:
+            字典，包含：
+            - "by_type": {"N→N": array, "N→F": array, "F→N": array, "F→F": array}
+              每类的注意力权重（多头取平均后），shape = (n_edges_of_type * n_samples,)
+            - "n_samples": 实际使用的样本数
+            - "n_heads": 注意力头数
+        """
+        self.network.eval()
+        X_test, Y_test = test_data
+        n_samples = min(n_samples, len(X_test))
+
+        # 按边类型收集注意力权重
+        attn_by_type = {"N→N": [], "N→F": [], "F→N": [], "F→F": []}
+
+        # 原始边索引（不含自环），用于分析节点间的注意力
+        edge_index_raw = build_edge_index(self.topo)
+        n_raw_edges = edge_index_raw.shape[1]
+
+        with torch.inference_mode():
+            for i in range(n_samples):
+                node_features = syndrome_to_node_features(
+                    X_test[i], self.topo, self.reverse_map,
+                    feature_mode=self.feature_mode
+                )
+                node_features = node_features.to(self.device)
+
+                _, attn_dict = self.network(
+                    node_features, self.edge_index, return_attn=True
+                )
+
+                # 取最终层注意力：alpha shape = (n_edges_with_selfloops, n_heads)
+                _, alpha = attn_dict["final"]
+                # 多头取平均 → shape = (n_edges_with_selfloops,)
+                alpha_avg = alpha.mean(dim=1).cpu().numpy()
+
+                # 只取前 n_raw_edges 条边（排除自环）
+                # edge_index 构造方式：先是原始边，自环在末尾追加
+                alpha_edges = alpha_avg[:n_raw_edges]
+
+                # 获取节点标签
+                labels = Y_test[i]  # shape = (n_nodes,)
+                src = edge_index_raw[0].numpy()
+                dst = edge_index_raw[1].numpy()
+
+                for j in range(n_raw_edges):
+                    s_label = labels[src[j]]  # 0=正常，1=故障
+                    d_label = labels[dst[j]]
+                    if s_label == 0 and d_label == 0:
+                        attn_by_type["N→N"].append(alpha_edges[j])
+                    elif s_label == 0 and d_label == 1:
+                        attn_by_type["N→F"].append(alpha_edges[j])
+                    elif s_label == 1 and d_label == 0:
+                        attn_by_type["F→N"].append(alpha_edges[j])
+                    else:
+                        attn_by_type["F→F"].append(alpha_edges[j])
+
+        # 转为 numpy 数组
+        for key in attn_by_type:
+            attn_by_type[key] = np.array(attn_by_type[key])
+
+        n_heads = self.network.gat_final.heads
+        return {
+            "by_type": attn_by_type,
+            "n_samples": n_samples,
+            "n_heads": n_heads,
+        }
 
     def _evaluate_tensors(self, X: torch.Tensor, Y: torch.Tensor,
                           batch_size: int = 64) -> tuple:

@@ -131,7 +131,10 @@ GAT-FaultDiagnosis/
 ├── utils/               # 工具
 │   ├── __init__.py
 │   ├── logger.py        # 日志配置
-│   └── visualizer.py    # Syndrome 可视化
+│   ├── visualizer.py    # Syndrome 可视化
+│   └── attention_viz.py # GAT 注意力权重可视化分析
+├── figures/             # 论文实验结果绘图
+│   └── plot_figures.py  # 第四章实验图表绘制脚本
 ├── papers/              # 参考论文
 ├── datasets/            # 保存的数据集（运行时生成）
 ├── TrainingRecords/     # 实验记录 JSON（raw_data/{时间戳}/ 子目录组织）

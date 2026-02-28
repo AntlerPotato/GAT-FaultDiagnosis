@@ -17,6 +17,53 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
+from matplotlib.font_manager import FontProperties
+from matplotlib.lines import Line2D
+
+# ============================================================
+# 全局字体配置（与 figures/plot_figures.py 保持一致）
+# ============================================================
+plt.rcParams['font.sans-serif'] = ['SimSun', 'Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['mathtext.fontset'] = 'stix'
+
+FONT_TNR = FontProperties(family='Times New Roman')
+FONT_TNR_BOLD = FontProperties(family='Times New Roman', weight='bold')
+
+SAVE_DPI = 600
+
+
+def _hypercube_layout(dimension: int) -> dict[int, tuple[float, float]]:
+    """
+    生成超立方体节点的固定2D坐标（伪3D投影）
+
+    Args:
+        dimension: 超立方体维度
+
+    Returns:
+        节点ID到(x, y)坐标的映射字典
+
+    Notes:
+        - bit 0 控制水平方向（x轴）
+        - bit 1 控制垂直方向（y轴）
+        - bit 2+ 沿对角线方向偏移，逐层缩小，模拟高维投影
+    """
+    pos = {}
+    for node in range(2 ** dimension):
+        x, y = 0.0, 0.0
+        for bit in range(dimension):
+            val = ((node >> bit) & 1) * 2 - 1  # -1 or +1
+            if bit == 0:
+                x += val
+            elif bit == 1:
+                y += val
+            else:
+                # 高维度：沿对角线方向偏移，逐层缩小
+                scale = 0.6 * (0.5 ** (bit - 2))
+                x += val * scale
+                y += val * scale
+        pos[node] = (x, y)
+    return pos
 
 
 def visualize_syndrome(syndrome_path: str, dimension: int = None) -> str:
@@ -101,35 +148,51 @@ def visualize_syndrome(syndrome_path: str, dimension: int = None) -> str:
                 edge_styles.append("solid")
 
     # 绘图
-    fig, ax = plt.subplots(figsize=(10, 8))
-    pos = nx.spring_layout(G, seed=42)
+    fig, ax = plt.subplots(figsize=(8, 7))
+    fig.set_facecolor('#FFFFFF')
+    ax.set_facecolor('#FAF9F5')
+    ax.axis('off')
+
+    # 使用固定的超立方体布局
+    pos = _hypercube_layout(dimension)
 
     for (u, v), color, style in zip(edges, edge_colors, edge_styles):
         nx.draw_networkx_edges(G, pos, edgelist=[(u, v)], edge_color=color,
-                              style=style, width=2, ax=ax)
+                              style=style, width=2.2, ax=ax)
 
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=800, ax=ax)
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=800,
+                           edgecolors='white', linewidths=1.5, ax=ax)
 
     binary_labels = {i: format(i, f'0{dimension}b') for i in range(n_nodes)}
-    nx.draw_networkx_labels(G, pos, labels=binary_labels, font_size=8, font_weight="bold", ax=ax)
+    nx.draw_networkx_labels(G, pos, labels=binary_labels, font_size=9,
+                            font_weight="bold", font_family='Times New Roman',
+                            ax=ax)
 
-    from matplotlib.lines import Line2D
-    faulty_binary = {format(i, f'0{dimension}b') for i in faulty_nodes}
-    legend = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#ff6b6b', markersize=12, label='Faulty Node'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='#69db7c', markersize=12, label='Healthy Node'),
-        Line2D([0], [0], color='#ff6b6b', linestyle='dashed', linewidth=2, label='Test Result: 1'),
-        Line2D([0], [0], color='#69db7c', linestyle='solid', linewidth=2, label='Test Result: 0'),
-        Line2D([0], [0], color='#adb5bd', linestyle='dotted', linewidth=2, label='Unreliable (both faulty)'),
+    # 图例（中文标签，与论文风格统一）
+    faulty_sorted = sorted(format(i, f'0{dimension}b') for i in faulty_nodes)
+    legend_handles = [
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='#ff6b6b',
+               markersize=12, label='故障节点'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='#69db7c',
+               markersize=12, label='正常节点'),
+        Line2D([0], [0], color='#ff6b6b', linestyle='dashed', linewidth=2,
+               label='测试结果：$\\mathrm{1}$（失败）'),
+        Line2D([0], [0], color='#69db7c', linestyle='solid', linewidth=2,
+               label='测试结果：$\\mathrm{0}$（通过）'),
+        Line2D([0], [0], color='#adb5bd', linestyle='dotted', linewidth=2,
+               label='不可靠（两端均故障）'),
     ]
-    ax.legend(handles=legend, loc='upper left')
+    legend = ax.legend(handles=legend_handles, loc='lower right', fontsize=10,
+                       frameon=True, fancybox=False, edgecolor='#E8E6DC',
+                       facecolor='white', framealpha=0.9)
+    legend.get_frame().set_linewidth(0.8)
 
-    ax.set_title(f"Hypercube {dimension}D - Faulty: {faulty_binary}")
     plt.tight_layout()
 
     # 保存图片并关闭，不显示
     output_path = syndrome_path.replace(".npz", ".png")
-    plt.savefig(output_path, dpi=150)
+    plt.savefig(output_path, dpi=SAVE_DPI, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
     plt.close()
 
     return output_path

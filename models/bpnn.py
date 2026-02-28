@@ -41,7 +41,7 @@ class BPNN(BaseModel):
     - Sigmoid: 将输出压缩到 (0,1)，表示故障概率
     """
     
-    def __init__(self, input_size: int, output_size: int, hidden_sizes: list = None):
+    def __init__(self, input_size: int, output_size: int, hidden_sizes: list | None = None):
         """
         初始化网络结构
         

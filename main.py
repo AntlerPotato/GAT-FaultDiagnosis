@@ -2,7 +2,7 @@
 Input:
   - 标准库: argparse, random, time, json, os
   - 第三方: numpy, torch
-  - 本地: topologies.Hypercube, models (BPNN, GAT), data (generate_data, save_dataset, load_dataset), evaluation.evaluate, utils (setup_logger, visualize_syndrome)
+  - 本地: topologies.Hypercube, models (BPNN, GAT), data (generate_data, save_dataset, load_dataset), evaluation.evaluate, utils (setup_logger, visualize_syndrome), utils.attention_viz.plot_attention_boxplot
 Output:
   - main: 主函数，执行故障诊断的完整流程
   - parse_args: 解析命令行参数
@@ -27,6 +27,7 @@ from models import BPNN, GAT
 from data import generate_data, save_dataset, load_dataset
 from evaluation import evaluate
 from utils import setup_logger, visualize_syndrome
+from utils.attention_viz import plot_attention_boxplot
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +65,8 @@ def parse_args() -> argparse.Namespace:
                         help="特征模式：bidirectional / unidirectional (default: bidirectional)")
     parser.add_argument("--no_regularization", action="store_true",
                         help="关闭 GAT 的 BatchNorm + Dropout")
+    parser.add_argument("--attention", action="store_true",
+                        help="训练 GAT 后分析注意力权重分布（需配合 --load 或 -m gat/both）")
     return parser.parse_args()
 
 
@@ -291,6 +294,19 @@ def main() -> None:
         }, "loss_history": results["loss_history"]}
         save_experiment_record(record, batch_id, logger)
 
+        # 注意力权重分析
+        if args.attention:
+            logger.info("=== Attention Weight Analysis ===")
+            attn_data = model.get_attention_weights(test_data)
+            for key, arr in attn_data["by_type"].items():
+                if len(arr) > 0:
+                    logger.info(f"  {key}: n={len(arr)}, mean={arr.mean():.4f}, std={arr.std():.4f}")
+            fig_path = plot_attention_boxplot(
+                attn_data, save_dir="figures",
+                dimension=dimension, fault_rate=float(args.faults)
+            )
+            logger.info(f"Attention boxplot saved: {fig_path}")
+
     elif args.model == "both":
         # 依次训练 BPNN 和 GAT，输出对比结果
         bpnn_model = BPNN(input_size=topo.syndrome_size, output_size=n_nodes)
@@ -319,6 +335,19 @@ def main() -> None:
             k: v for k, v in gat_results.items() if k != "loss_history"
         }, "loss_history": gat_results["loss_history"]}
         save_experiment_record(gat_record, batch_id, logger)
+
+        # 注意力权重分析
+        if args.attention:
+            logger.info("=== Attention Weight Analysis ===")
+            attn_data = gat_model.get_attention_weights(test_data)
+            for key, arr in attn_data["by_type"].items():
+                if len(arr) > 0:
+                    logger.info(f"  {key}: n={len(arr)}, mean={arr.mean():.4f}, std={arr.std():.4f}")
+            fig_path = plot_attention_boxplot(
+                attn_data, save_dir="figures",
+                dimension=dimension, fault_rate=float(args.faults)
+            )
+            logger.info(f"Attention boxplot saved: {fig_path}")
 
 
 if __name__ == "__main__":
