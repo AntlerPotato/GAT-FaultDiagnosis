@@ -352,3 +352,37 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# ==================== 使用示例 ====================
+#
+# --- 模型训练 ---
+# python main.py -d 4 -f 0.25 -n 5000 -e 200              # BPNN 训练（默认模型）
+# python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat       # GAT 训练
+# python main.py -d 6 -f 0.25 -n 5000 -e 200 -m both      # BPNN vs GAT 对比
+# python main.py -d 5 -f 6 -n 5000 -e 200                  # 指定故障数（整数）而非故障率
+#
+# --- 消融实验 ---
+# python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat --n_heads 1                      # 单头注意力（8头→1头）
+# python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat --n_layers 1                     # 单层 GAT（2层→1层）
+# python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat --feature_mode unidirectional    # 单向特征（双向→单向）
+# python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat --no_regularization              # 关闭 BatchNorm + Dropout
+#
+# --- 注意力分析 ---
+# python main.py -d 6 -f 0.25 -n 5000 -e 200 -m gat --attention      # GAT 训练后分析注意力权重
+# python main.py -d 6 -f 0.25 -n 5000 -e 200 -m both --attention     # 对比模式 + 注意力分析
+#
+# --- 数据集管理 ---
+# python main.py -d 6 -f 0.25 -n 5000 --save my_data                 # 保存数据集
+# python main.py --load my_data -m gat -e 200                         # 加载数据集训练 GAT
+# python main.py --load my_data -m both -e 200                        # 加载数据集对比训练
+#
+# --- Syndrome 可视化 ---
+# python main.py --visualize datasets/my_data/xxx/train/1.npz         # 可视化单个 syndrome
+#
+# --- 论文图表绘制（另一个脚本）---
+# python figures/plot_figures.py --fig 1       # 图4-1：维度-准确率对比折线图
+# python figures/plot_figures.py --fig 2       # 图4-2：维度-参数量对比折线图
+# python figures/plot_figures.py --fig 3       # 图4-3：故障率-准确率对比折线图
+# python figures/plot_figures.py --fig 4       # 图4-4：样本量-准确率对比折线图
+# python figures/plot_figures.py --fig 5       # 图4-5：消融实验-准确率柱状图
+# python figures/plot_figures.py --fig all     # 绘制全部图表
