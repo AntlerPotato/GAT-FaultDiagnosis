@@ -4,6 +4,7 @@ Input:
   - 第三方: numpy, matplotlib, networkx
 Output:
   - visualize_syndrome: 可视化单个 syndrome 文件
+  - visualize_hypercube_topology: 生成超立方体纯拓扑结构图（论文第二章用）
 Position: 提供 syndrome 的可视化功能，生成网络拓扑图并标注故障节点和测试结果
 
 ⚠️ 提醒：修改本文件后务必：
@@ -66,7 +67,7 @@ def _hypercube_layout(dimension: int) -> dict[int, tuple[float, float]]:
     return pos
 
 
-def visualize_syndrome(syndrome_path: str, dimension: int = None) -> str:
+def visualize_syndrome(syndrome_path: str, dimension: int | None = None) -> str:
     """
     可视化单个 syndrome 文件
 
@@ -191,6 +192,65 @@ def visualize_syndrome(syndrome_path: str, dimension: int = None) -> str:
 
     # 保存图片并关闭，不显示
     output_path = syndrome_path.replace(".npz", ".png")
+    plt.savefig(output_path, dpi=SAVE_DPI, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
+    plt.close()
+
+    return output_path
+
+
+def visualize_hypercube_topology(dimension: int, output_path: str) -> str:
+    """
+    生成超立方体纯拓扑结构图（无故障信息，用于论文第二章理论介绍）
+
+    Args:
+        dimension: 超立方体维度
+        output_path: 输出图片文件路径
+
+    Returns:
+        生成的图片文件路径
+    """
+    n_nodes = 2 ** dimension
+
+    # 构建超立方体图
+    G = nx.hypercube_graph(dimension)
+    G = nx.relabel_nodes(G, {n: int("".join(map(str, n)), 2) for n in G.nodes()})
+
+    # 收集所有边（u < v 去重）
+    edges = []
+    for u in range(n_nodes):
+        for bit in range(dimension):
+            v = u ^ (1 << bit)
+            if u < v:
+                edges.append((u, v))
+
+    # 绘图
+    fig, ax = plt.subplots(figsize=(8, 7))
+    fig.set_facecolor('#FFFFFF')
+    ax.set_facecolor('#FFFFFF')
+    ax.axis('off')
+
+    # 复用与 syndrome 可视化相同的布局
+    pos = _hypercube_layout(dimension)
+
+    # 统一黑色实线
+    nx.draw_networkx_edges(G, pos, edgelist=edges, edge_color='#333333',
+                           style='solid', width=2.0, ax=ax)
+
+    # 统一浅蓝色节点 + 黑色边框
+    nx.draw_networkx_nodes(G, pos, node_color='#d0ebff', node_size=800,
+                           edgecolors='#333333', linewidths=1.5, ax=ax)
+
+    # 二进制编码标签
+    binary_labels = {i: format(i, f'0{dimension}b') for i in range(n_nodes)}
+    nx.draw_networkx_labels(G, pos, labels=binary_labels, font_size=9,
+                            font_weight="bold", font_family='Times New Roman',
+                            ax=ax)
+
+    plt.tight_layout()
+
+    # 保存
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=SAVE_DPI, bbox_inches='tight',
                 facecolor=fig.get_facecolor())
     plt.close()
