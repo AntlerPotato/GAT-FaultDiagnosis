@@ -168,7 +168,6 @@ GAT-FaultDiagnosis/
 ├── TrainingRecords/     # 实验记录 JSON（raw_data/{时间戳}/ 子目录组织）
 ├── main.py              # 项目入口
 ├── requirements.txt     # 项目依赖
-├── CLAUDE.md            # Claude Code 项目规范
 └── .gitignore
 ```
 
