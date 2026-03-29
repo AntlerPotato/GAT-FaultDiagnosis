@@ -225,6 +225,12 @@ class NewModel(BaseModel):
     def predict(self, x): ...
 ```
 
+## 学术诚信声明 / Academic Integrity Notice
+
+本项目是南京邮电大学本科毕业设计作品，仅供学习和学术交流使用。严禁将本项目代码或成果直接用于其他学位论文、课程作业或学术提交。**任何未经授权**的学术使用均构成学术不端行为，将面临相应的学术处分。
+
+This project is an undergraduate thesis at Nanjing University of Posts and Telecommunications (NJUPT), intended solely for learning and academic exchange. It is strictly prohibited to use the code or results of this project directly in other theses, coursework, or academic submissions. **Any unauthorized academic use** constitutes academic misconduct and may result in disciplinary action.
+
 ## License
 
 MIT
