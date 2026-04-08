@@ -23,11 +23,11 @@ import time
 import numpy as np
 import torch
 from topologies import Hypercube
-from models import BPNN, GAT
+from models import BPNN, GAT, GATWF
 from data import generate_data, save_dataset, load_dataset
 from evaluation import evaluate
 from utils import setup_logger, visualize_syndrome
-from utils.attention_viz import plot_attention_boxplot
+from figures.plot_figures import plot_fig6
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,8 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-e", "--epochs", type=int, default=200,
                         help="训练轮数 (default: 200)")
     parser.add_argument("-m", "--model", type=str, default="bpnn",
-                        choices=["bpnn", "gat", "both"],
-                        help="模型选择：bpnn / gat / both (default: bpnn)")
+                        choices=["bpnn", "gat", "gatwf", "both"],
+                        help="模型选择：bpnn / gat / gatwf / both (default: bpnn)")
     parser.add_argument("--load", type=str, default=None,
                         help="加载已有数据集（数据集名称）")
     parser.add_argument("--save", type=str, default=None,
@@ -277,6 +277,15 @@ def main() -> None:
             feature_mode=args.feature_mode,
         )
 
+    def _create_gatwf_model() -> GATWF:
+        """创建 GAT-WF 模型实例（加权特征变体，不支持 feature_mode/attention）"""
+        return GATWF(
+            topo=topo,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            no_regularization=args.no_regularization,
+        )
+
     if args.model == "bpnn":
         model = BPNN(input_size=topo.syndrome_size, output_size=n_nodes)
         results = train_and_evaluate("BPNN", model, train_data, val_data, test_data, args.epochs, logger)
@@ -301,11 +310,32 @@ def main() -> None:
             for key, arr in attn_data["by_type"].items():
                 if len(arr) > 0:
                     logger.info(f"  {key}: n={len(arr)}, mean={arr.mean():.4f}, std={arr.std():.4f}")
-            fig_path = plot_attention_boxplot(
-                attn_data, save_dir="figures",
-                dimension=dimension, fault_rate=float(args.faults)
-            )
-            logger.info(f"Attention boxplot saved: {fig_path}")
+            plot_fig6(attn_data,
+                      dimension=dimension, fault_rate=float(args.faults))
+            logger.info("Attention boxplot saved: figures/fig4_6_attention_boxplot.png")
+
+    elif args.model == "gatwf":
+        # GAT-WF：融合加权 PMC 统计特征的实验性变体
+        gatwf_variant = "GAT-WF"
+        if args.n_heads != 8:
+            gatwf_variant += f"-{args.n_heads}head"
+        if args.n_layers != 2:
+            gatwf_variant += f"-{args.n_layers}layer"
+        if args.no_regularization:
+            gatwf_variant += "-noreg"
+        model = _create_gatwf_model()
+        results = train_and_evaluate(gatwf_variant, model, train_data, val_data, test_data, args.epochs, logger)
+        gatwf_config = {
+            "n_heads": args.n_heads,
+            "n_layers": args.n_layers,
+            "feature_mode": "bidirectional+weighted",
+            "no_regularization": args.no_regularization,
+        }
+        record = {**experiment_config, "model": gatwf_variant, "gat_config": gatwf_config,
+                  "results": {
+            k: v for k, v in results.items() if k != "loss_history"
+        }, "loss_history": results["loss_history"]}
+        save_experiment_record(record, batch_id, logger)
 
     elif args.model == "both":
         # 依次训练 BPNN 和 GAT，输出对比结果
@@ -343,11 +373,9 @@ def main() -> None:
             for key, arr in attn_data["by_type"].items():
                 if len(arr) > 0:
                     logger.info(f"  {key}: n={len(arr)}, mean={arr.mean():.4f}, std={arr.std():.4f}")
-            fig_path = plot_attention_boxplot(
-                attn_data, save_dir="figures",
-                dimension=dimension, fault_rate=float(args.faults)
-            )
-            logger.info(f"Attention boxplot saved: {fig_path}")
+            plot_fig6(attn_data,
+                      dimension=dimension, fault_rate=float(args.faults))
+            logger.info("Attention boxplot saved: figures/fig4_6_attention_boxplot.png")
 
 
 if __name__ == "__main__":

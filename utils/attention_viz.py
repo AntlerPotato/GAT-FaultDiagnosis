@@ -76,6 +76,12 @@ def plot_attention_boxplot(attn_data: dict, save_dir: str = "figures",
     """
     按边类型绘制注意力权重分布箱线图
 
+    .. deprecated::
+        本函数已被 ``figures.plot_figures.plot_fig6()`` 取代。
+        ``plot_fig6()`` 接受完全相同的 ``attn_data`` 参数，但图表美观度更高
+        （须线/帽线颜色跟随箱体、均值菱形散点、统一 TNR 字体、600 DPI 保存）。
+        建议在 main.py 中改用 ``plot_fig6()``。
+
     将注意力权重按边两端节点状态分为 4 类（N→N, N→F, F→N, F→F），
     绘制箱线图展示各类型的分布差异，论证 GAT 是否学到了区分故障/正常节点的能力。
 

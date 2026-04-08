@@ -818,6 +818,127 @@ def plot_fig5() -> None:
 
 
 # ============================================================
+# 图4-6：GAT 注意力权重分布箱线图（按边类型）
+# ============================================================
+
+# 边类型配色（独立于 COLORS 字典）
+_EDGE_COLORS = {
+    "N→N": "#5B9A5B",  # 深绿
+    "N→F": "#C17832",  # 深橙
+    "F→N": "#4E81B1",  # 蓝色
+    "F→F": "#C15A38",  # 红色
+}
+
+
+def plot_fig6(attn_data: dict,
+              dimension: int | None = None,
+              fault_rate: float | None = None) -> None:
+    """图4-6：GAT注意力权重按边类型分布箱线图。
+
+    Args:
+        attn_data: GAT.get_attention_weights() 的返回值，包含：
+            - "by_type": {"N→N": array, "N→F": array, "F→N": array, "F→F": array}
+            - "n_samples": 样本数
+            - "n_heads": 注意力头数
+        dimension: 超立方体维度（用于标题）
+        fault_rate: 故障率（用于标题）
+    """
+    by_type  = attn_data["by_type"]
+    n_samples = attn_data["n_samples"]
+    n_heads   = attn_data["n_heads"]
+
+    # 只保留有数据的边类型，固定顺序
+    order = ["N→N", "N→F", "F→N", "F→F"]
+    labels = [k for k in order if len(by_type[k]) > 0]
+    data   = [by_type[k] for k in labels]
+    counts = [len(by_type[k]) for k in labels]
+    means  = [float(np.mean(by_type[k])) for k in labels]
+    colors = [_EDGE_COLORS[k] for k in labels]
+
+    x_pos = np.arange(1, len(labels) + 1)
+
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    apply_style(ax)
+
+    # ── 箱线图 ────────────────────────────────────────────────
+    bp = ax.boxplot(
+        data, positions=x_pos, widths=0.46,
+        patch_artist=True, showfliers=False,
+        medianprops=dict(color='white', linewidth=2.0),
+        whiskerprops=dict(linewidth=1.2),
+        capprops=dict(linewidth=1.2),
+        boxprops=dict(linewidth=1.2),
+    )
+
+    for patch, col in zip(bp['boxes'], colors):
+        patch.set_facecolor(col)
+        patch.set_alpha(0.88)
+
+    # 须线 / 帽线颜色跟随箱体
+    for i, col in enumerate(colors):
+        bp['whiskers'][2 * i].set_color(col)
+        bp['whiskers'][2 * i + 1].set_color(col)
+        bp['caps'][2 * i].set_color(col)
+        bp['caps'][2 * i + 1].set_color(col)
+
+    # ── 均值散点（菱形） ─────────────────────────────────────
+    ax.scatter(x_pos, means,
+               marker='D', s=36, zorder=6,
+               color=colors, edgecolors='white', linewidths=0.8)
+
+    # ── 标注：样本数 + 均值 ───────────────────────────────────
+    y_span = ax.get_ylim()[1] - ax.get_ylim()[0]
+    for i, (lbl, cnt, mu) in enumerate(zip(labels, counts, means)):
+        q75 = float(np.percentile(data[i], 75))
+        # 放在 Q75 上方固定偏移
+        y_ann = q75 + y_span * 0.04
+        ax.text(x_pos[i], y_ann,
+                f'n={cnt:,}\n$\\mu$={mu:.4f}',
+                ha='center', va='bottom', fontsize=9,
+                color='#333333', linespacing=1.4,
+                fontproperties=FONT_TNR)
+
+    # ── X 轴标签 ──────────────────────────────────────────────
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels, fontsize=11)
+    ax.set_xlim(0.4, len(labels) + 0.6)
+
+    # ── Y 轴 ──────────────────────────────────────────────────
+    ax.set_ylim(0.04, 0.42)
+    ax.yaxis.set_major_locator(mticker.MultipleLocator(0.05))
+    ax.set_ylabel('注意力权重（多头平均）', fontsize=12, color='#000000',
+                  fontweight='bold', labelpad=8)
+    ax.set_xlabel('边类型（源节点 → 目标节点）', fontsize=12, color='#000000',
+                  fontweight='bold', labelpad=8)
+
+    # ── 标题 ──────────────────────────────────────────────────
+    sub_parts = []
+    if dimension is not None:
+        sub_parts.append(f'$\\mathrm{{d{{=}}{dimension}}}$')
+    if fault_rate is not None:
+        sub_parts.append(f'故障率$\\mathrm{{{{=}}{fault_rate}}}$')
+    sub_parts.append(f'$\\mathrm{{{n_samples}}}$样本')
+    sub_parts.append(f'$\\mathrm{{{n_heads}}}$头平均')
+    title = 'GAT 注意力权重分布（' + '，'.join(sub_parts) + '）'
+    ax.set_title(title, fontsize=13, color='#000000', pad=12)
+
+    plt.tight_layout()
+
+    # tight_layout 后设置字体
+    for lbl in ax.get_yticklabels():
+        lbl.set_fontproperties(FONT_TNR)
+    for lbl in ax.get_xticklabels():
+        lbl.set_fontproperties(FONT_TNR)
+
+    # ── 保存 ──────────────────────────────────────────────────
+    save_path = FIG_DIR / 'fig4_6_attention_boxplot.png'
+    fig.savefig(save_path, dpi=SAVE_DPI, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
+    print(f'已保存: {save_path}')
+    plt.close(fig)
+
+
+# ============================================================
 # 主入口
 # ============================================================
 
